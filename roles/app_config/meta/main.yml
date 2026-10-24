@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: equipe-ops
+  description: Génère la configuration de l'application, fixe son JAVA_HOME et démarre le service
+  license: proprietary
+  min_ansible_version: "2.17"
+  platforms:
+    - name: EL
+      versions: ["9"]
+dependencies: []

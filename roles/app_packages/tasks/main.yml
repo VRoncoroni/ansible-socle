@@ -1,0 +1,18 @@
+---
+- name: Installer chaque paquet à la version demandée
+  ansible.builtin.dnf:
+    name: "{{ item.name }}-{{ item.version }}"
+    state: present
+    allow_downgrade: true      # permet le retour arrière en changeant la version
+    update_cache: true
+  loop: "{{ app_packages }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.version }}"
+  notify: app_restart
+
+- name: Déployer les artefacts qui ne sont pas des paquets
+  ansible.builtin.include_tasks: raw.yml
+  loop: "{{ app_archives }}"
+  loop_control:
+    loop_var: archive
+    label: "{{ archive.name }} {{ archive.version }}"

@@ -1,0 +1,21 @@
+---
+# Inventaire superposé à inventories/<env> pour le lab (lab/lab.sh run) :
+# les VM sont des conteneurs, joints par l'API Docker, et Nexus est celui du réseau compose.
+# Les variables d'hôte d'ici l'emportent sur celles de l'inventaire de l'environnement.
+all:
+  hosts:
+    vm-int-01:
+      ansible_host: vm-int-01
+      ansible_connection: community.docker.docker
+      ansible_user: root
+      nexus_url: http://nexus:8081
+    vm-pre-01:
+      ansible_host: vm-pre-01
+      ansible_connection: community.docker.docker
+      ansible_user: root
+      nexus_url: http://nexus:8081
+    vm-prod-01:
+      ansible_host: vm-prod-01
+      ansible_connection: community.docker.docker
+      ansible_user: root
+      nexus_url: http://nexus:8081

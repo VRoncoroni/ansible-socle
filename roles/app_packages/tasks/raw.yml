@@ -1,0 +1,58 @@
+---
+# Archive tar.gz : un dossier par version et un lien current.
+# Le retour arrière devient un simple changement de lien.
+- name: "Créer les dossiers de la release : {{ archive.name }}"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ app_archives_root }}/archives"
+    - "{{ app_archives_root }}/{{ archive.name }}/releases/{{ archive.version }}"
+
+- name: "Télécharger l'archive depuis Nexus : {{ archive.name }}"
+  ansible.builtin.get_url:
+    url: "{{ nexus_url }}/repository/raw-apps/{{ archive.name }}/{{ archive.version }}/{{ archive.name }}-{{ archive.version }}.tar.gz"
+    dest: "{{ app_archives_root }}/archives/{{ archive.name }}-{{ archive.version }}.tar.gz"
+    url_username: "{{ nexus_user }}"
+    url_password: "{{ nexus_password }}"
+    force_basic_auth: true
+    checksum: "sha256:{{ archive.sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  no_log: true
+
+- name: "Extraire dans le dossier de la release : {{ archive.name }}"
+  ansible.builtin.unarchive:
+    src: "{{ app_archives_root }}/archives/{{ archive.name }}-{{ archive.version }}.tar.gz"
+    dest: "{{ app_archives_root }}/{{ archive.name }}/releases/{{ archive.version }}"
+    remote_src: true
+    creates: "{{ app_archives_root }}/{{ archive.name }}/releases/{{ archive.version }}/{{ archive.creates | default('bin') }}"
+  when: not ansible_check_mode
+
+- name: "Basculer le lien current : {{ archive.name }}"
+  ansible.builtin.file:
+    src: "{{ app_archives_root }}/{{ archive.name }}/releases/{{ archive.version }}"
+    dest: "{{ app_archives_root }}/{{ archive.name }}/current"
+    state: link
+    force: true            # la cible n'existe pas encore en mode --check
+  notify: app_restart
+
+- name: "Lister les releases présentes : {{ archive.name }}"
+  ansible.builtin.find:
+    paths: "{{ app_archives_root }}/{{ archive.name }}/releases"
+    file_type: directory
+  register: app_packages_releases
+
+# Garde la release courante et les plus récentes (tri par numéro de version),
+# sur le modèle de la purge des JDK
+- name: "Purger les anciennes releases : {{ archive.name }}"
+  ansible.builtin.file:
+    path: "{{ app_archives_root }}/{{ archive.name }}/releases/{{ item }}"
+    state: absent
+  loop: >-
+    {{ (app_packages_releases.files | map(attribute='path') | map('basename')
+        | reject('equalto', archive.version) | community.general.version_sort | reverse | list)[app_archives_keep - 1:] }}

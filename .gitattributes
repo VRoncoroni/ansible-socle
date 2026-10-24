@@ -1,0 +1,5 @@
+# Les jeux d'essai sont comparés octet pour octet : ni conversion de fins de ligne ni d'encodage
+tests/functional/** -text
+*.sh text eol=lf
+# Fichiers chiffrés : diff lisible avec « git config diff.ansible-vault.textconv 'ansible-vault view' »
+**/vault.yml diff=ansible-vault merge=binary

@@ -1,0 +1,71 @@
+---
+- name: Créer le dossier de configuration
+  ansible.builtin.file:
+    path: "{{ app_config_dir }}"
+    state: directory
+    owner: root
+    group: monappli
+    mode: "0750"
+
+# Le fichier principal reste lisible dans les diffs de la CI ;
+# le fichier de secrets est déployé sans diff ni log.
+- name: Déployer la configuration de l'application
+  ansible.builtin.template:
+    src: app.conf.j2
+    dest: "{{ app_config_dir }}/app.conf"
+    owner: root
+    group: monappli
+    mode: "0640"
+    backup: true                                   # garde l'ancienne version sur la VM
+    validate: "{{ app_config_validate if app_config_validate else omit }}"
+  environment:
+    JAVA_HOME: "{{ java_home }}"                   # pour le vérificateur, qui est un outil Java
+  notify: app_restart
+
+- name: Déployer les secrets de l'application
+  ansible.builtin.template:
+    src: secrets.conf.j2
+    dest: "{{ app_config_dir }}/secrets.conf"
+    owner: root
+    group: monappli
+    mode: "0640"
+  diff: false                # sinon --diff affiche le mot de passe dans les logs de CI
+  no_log: true
+  notify: app_restart
+
+# L'API lit sa configuration en variables d'environnement (EnvironmentFile de la unit)
+- name: Déployer l'environnement de l'API
+  ansible.builtin.template:
+    src: api.env.j2
+    dest: "{{ app_config_dir }}/api.env"
+    owner: root
+    group: monappli
+    mode: "0640"
+  notify: app_restart
+
+- name: Créer le dossier de surcharge systemd
+  ansible.builtin.file:
+    path: /etc/systemd/system/monappli-api.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# JAVA_HOME par application, dans sa unit : ni /etc/profile.d (non lu par systemd)
+# ni alternatives (changerait le java de toute la machine)
+- name: Fixer le JAVA_HOME de l'application
+  ansible.builtin.template:
+    src: java.conf.j2
+    dest: /etc/systemd/system/monappli-api.service.d/java.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: app_restart
+
+# Le paquet ne démarre pas le service : c'est le rôle d'Ansible
+- name: Activer et démarrer l'API
+  ansible.builtin.systemd_service:
+    name: monappli-api
+    enabled: true
+    state: started
+    daemon_reload: true

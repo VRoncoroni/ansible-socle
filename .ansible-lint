@@ -1,0 +1,22 @@
+---
+profile: production
+
+exclude_paths:
+  - collections/
+  - .github/
+  - .gitlab-ci.yml
+  - .venv/
+  - lab/
+  - inventories/*/group_vars/all/vault.yml   # chiffrés, non lisibles sans mot de passe
+
+skip_list:
+  # Les variables de versions.yml et main.yml (app_packages, app_port, nexus_url…) sont des
+  # données d'inventaire partagées entre rôles : un préfixe par rôle les rendrait illisibles.
+  - var-naming[no-role-prefix]
+
+# Les fichiers vault.yml chiffrés ne sont pas lus par le lint
+kinds:
+  - playbook: "playbooks/*.yml"
+  - tasks: "playbooks/tasks/*.yml"
+  - vars: "inventories/*/group_vars/**/*.yml"
+  - vars: "playbooks/group_vars/*.yml"

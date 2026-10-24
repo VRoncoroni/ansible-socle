@@ -1,0 +1,5 @@
+matricule;nom;prenom;service;affectations_actives;quotite_totale;statut
+A001;Durand;Claire;Finances;2;100;COMPLET
+A002;Petit;Louis;Informatique;1;60;PARTIEL
+A003;Martin;Paul;Informatique;2;120;SURCHARGE
+A004;Moreau;Sophie;RH;0;0;NON-AFFECTE

@@ -1,0 +1,4 @@
+# Clés SSH attendues des VM de l'environnement integration (StrictHostKeyChecking=yes).
+# À remplir une fois, après vérification de l'empreinte auprès de l'équipe système :
+#   ssh-keyscan -t ed25519 10.10.1.11 | sed 's/^10.10.1.11/vm-int-01,10.10.1.11/' >> inventories/integration/known_hosts
+# Inutile si le runner est installé sur la VM elle-même (ansible_connection: local).

@@ -1,0 +1,234 @@
+# Deux sortes de pipelines : merge requests, et branche main (push ou planification)
+#   MR   : lint, Molecule, plan:integration (--check --diff) ; check:prod-releases si la prod change
+#   main : seuls les environnements concernés par le commit ont des jobs :
+#          deploy -> test -> propose (MR de promotion suivante) ; preprod et prod en manuel
+#   Planifié (SCHEDULE_TASK=drift) : détection de dérive sur les trois environnements
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+stages: [verifier, integration, preprod, prod]
+
+# ---------- Conditions réutilisables ----------
+.if-mr: &if-mr
+  if: $CI_PIPELINE_SOURCE == "merge_request_event"
+.if-main: &if-main
+  if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+.if-drift: &if-drift
+  if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_TASK == "drift"
+
+# ---------- Fichiers qui concernent chaque environnement ----------
+.chg-integration: &chg-integration
+  - roles/**/*
+  - playbooks/**/*
+  - tests/**/*
+  - requirements.yml
+  - ansible.cfg
+  - inventories/integration/**/*
+.chg-preprod: &chg-preprod
+  - roles/**/*
+  - playbooks/**/*
+  - tests/**/*
+  - requirements.yml
+  - ansible.cfg
+  - inventories/preprod/**/*
+.chg-prod: &chg-prod
+  - roles/**/*
+  - playbooks/**/*
+  - requirements.yml
+  - ansible.cfg
+  - inventories/prod/**/*
+
+# ---------- Modèles ----------
+.ansible:
+  variables:
+    PLAYBOOK: site.yml
+    ANSIBLE_ARGS: ""
+  before_script:
+    - ansible-galaxy collection install -r requirements.yml
+    - '[ -z "${SSH_PRIVATE_KEY:-}" ] || chmod 600 "$SSH_PRIVATE_KEY"'
+  script:
+    - set -o pipefail
+    - >-
+      ansible-playbook -i "inventories/$TARGET" "playbooks/$PLAYBOOK"
+      ${SSH_PRIVATE_KEY:+--private-key "$SSH_PRIVATE_KEY"}
+      --vault-password-file scripts/vault-pass.sh
+      --diff $ANSIBLE_ARGS | tee ansible.log
+  artifacts:
+    when: always
+    paths: [ansible.log]
+    expire_in: 30 days
+
+.integration: { variables: { TARGET: integration }, tags: [ansible-integration] }
+.preprod: { variables: { TARGET: preprod }, tags: [ansible-preprod] }
+.prod: { variables: { TARGET: prod }, tags: [ansible-prod] }
+
+# ---------- Vérifications (MR et main) ----------
+lint:
+  stage: verifier
+  image: registry.exemple.local/outillage/ansible-ci:2026.10
+  tags: [docker]
+  script:
+    - yamllint .
+    - ansible-lint
+  rules: [*if-mr, *if-main]
+
+molecule:
+  stage: verifier
+  image: registry.exemple.local/outillage/ansible-ci:2026.10
+  tags: [docker]                  # runner capable de lancer des conteneurs
+  script:
+    - cd roles/app_config && molecule test
+  rules: [*if-mr, *if-main]
+
+# Garde-fou avant la prod : refuse une MR qui mettrait en prod un paquet absent de yum-releases.
+# À rendre obligatoire avec « le pipeline doit réussir ».
+check:prod-releases:
+  stage: verifier
+  image: registry.exemple.local/outillage/ansible-ci:2026.10   # contient yq et curl
+  tags: [docker]
+  script: [scripts/check-prod-releases.sh]
+  rules:
+    - <<: *if-mr
+      changes: [inventories/prod/group_vars/all/versions.yml]
+
+# ---------- Merge request : montrer l'impact sur l'intégration ----------
+plan:integration:
+  extends: [.ansible, .integration]
+  stage: integration
+  variables: { ANSIBLE_ARGS: --check }
+  environment: { name: integration, action: prepare }
+  rules: [*if-mr]
+
+# ---------- main : intégration ----------
+deploy:integration:
+  extends: [.ansible, .integration]
+  stage: integration
+  environment: { name: integration, deployment_tier: testing }
+  resource_group: integration
+  rules:
+    - <<: *if-main
+      changes: *chg-integration
+
+test:integration:
+  extends: [.ansible, .integration]
+  stage: integration
+  needs: [deploy:integration]
+  variables: { PLAYBOOK: test-functional.yml }
+  environment: { name: integration, action: verify }
+  rules:
+    - <<: *if-main
+      changes: *chg-integration
+
+propose:preprod:
+  stage: integration
+  needs: [test:integration]
+  tags: [ansible-integration]
+  variables: { GIT_DEPTH: "0" }
+  script: [scripts/promote.sh integration preprod]
+  rules:
+    - <<: *if-main
+      changes: [inventories/integration/group_vars/all/versions.yml]
+
+# ---------- main : preprod ----------
+plan:preprod:
+  extends: [.ansible, .preprod]
+  stage: preprod
+  needs:
+    - lint
+    - molecule
+    - { job: test:integration, optional: true }
+  variables: { ANSIBLE_ARGS: --check }
+  environment: { name: preprod, action: prepare }
+  rules:
+    - <<: *if-main
+      changes: *chg-preprod
+
+deploy:preprod:
+  extends: [.ansible, .preprod]
+  stage: preprod
+  needs: [plan:preprod]
+  environment: { name: preprod, deployment_tier: staging }
+  resource_group: preprod
+  rules:
+    - <<: *if-main
+      changes: *chg-preprod
+      when: manual                # attend un clic ; le pipeline reste « bloqué » d'ici là
+      allow_failure: false
+
+test:preprod:
+  extends: [.ansible, .preprod]
+  stage: preprod
+  needs: [deploy:preprod]
+  variables: { PLAYBOOK: test-functional.yml }
+  environment: { name: preprod, action: verify }
+  rules:
+    - <<: *if-main
+      changes: *chg-preprod
+
+propose:prod:
+  stage: preprod
+  needs: [test:preprod]
+  tags: [ansible-preprod]
+  variables: { GIT_DEPTH: "0" }
+  script: [scripts/promote.sh preprod prod]
+  rules:
+    - <<: *if-main
+      changes: [inventories/preprod/group_vars/all/versions.yml]
+
+# ---------- main : prod ----------
+plan:prod:
+  extends: [.ansible, .prod]
+  stage: prod
+  needs:
+    - lint
+    - molecule
+    - { job: test:preprod, optional: true }
+  variables: { ANSIBLE_ARGS: --check }
+  environment: { name: prod, action: prepare }
+  rules:
+    - <<: *if-main
+      changes: *chg-prod
+
+deploy:prod:
+  extends: [.ansible, .prod]
+  stage: prod
+  needs: [plan:prod]
+  environment:
+    name: prod
+    deployment_tier: production
+    url: https://monappli.exemple.local
+  resource_group: prod
+  rules:
+    - <<: *if-main
+      changes: *chg-prod
+      when: manual
+      allow_failure: false
+
+# ---------- Planifié : détection de dérive ----------
+drift:
+  extends: .ansible
+  stage: verifier
+  parallel:
+    matrix:
+      - TARGET: [integration, preprod, prod]
+  tags: [ansible-$TARGET]
+  variables: { ANSIBLE_ARGS: --check }
+  environment: { name: $TARGET, action: prepare }
+  script:
+    - !reference [.ansible, script]
+    - if grep -Eq 'changed=[1-9]' ansible.log; then echo "Dérive détectée sur $TARGET"; exit 1; fi
+  rules: [*if-drift]
+
+# ---------- Planifié : patchs système (SCHEDULE_TASK=patch-os) ----------
+# Mises à jour de l'OS hors dépôts applicatifs, un environnement après l'autre :
+# créer une planification par environnement avec PATCH_TARGET=integration|preprod|prod.
+patch-os:
+  extends: .ansible
+  stage: verifier
+  variables: { PLAYBOOK: patch-os.yml, TARGET: $PATCH_TARGET }
+  tags: [ansible-$PATCH_TARGET]
+  environment: { name: $PATCH_TARGET, action: prepare }
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_TASK == "patch-os" && $PATCH_TARGET

@@ -1,0 +1,7 @@
+---
+app_config_dir: /etc/monappli
+# Vérificateur fourni par le paquet monappli-api : refuse un app.conf invalide avant de l'écrire.
+# Chaîne vide = pas de vérification (Molecule, où le paquet n'est pas installé).
+app_config_validate: /opt/monappli/bin/monappli --check-config %s
+app_port: 8080
+app_log_level: info

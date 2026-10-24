@@ -1,0 +1,44 @@
+---
+# Mises à jour système, séparées des paquets applicatifs (planification dédiée).
+# Ici, latest est assumé : il s'agit des paquets du système, pas des applications.
+# Les versions applicatives et le JDK restent pilotés par versions.yml.
+- name: Mises à jour système
+  hosts: app
+  become: true
+  serial: 1                       # une VM à la fois quand il y en aura plusieurs
+  max_fail_percentage: 0
+  tasks:
+    - name: Installer l'outil needs-restarting
+      ansible.builtin.dnf:
+        name: dnf-utils
+        state: present
+        disablerepo: "nexus-*"
+
+    - name: Appliquer les mises à jour, hors dépôt applicatif
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest             # noqa: package-latest
+        update_only: true
+        disablerepo: "nexus-*"
+        exclude: "{{ app_packages | map(attribute='name') | list + ['gitlab-runner'] }}"
+      notify: app_restart
+
+    - name: Savoir si un redémarrage est nécessaire (noyau, glibc, systemd…)
+      ansible.builtin.command: needs-restarting -r
+      register: needs_reboot
+      changed_when: false
+      failed_when: needs_reboot.rc not in [0, 1]
+
+    - name: Signaler le redémarrage à planifier
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} doit redémarrer. Si le runner est sur cette VM, programmer
+          le redémarrage après le job (shutdown -r +2) ou lancer ce playbook depuis un autre runner.
+      when: needs_reboot.rc == 1
+
+  handlers:
+    - name: Redémarrer l'application
+      ansible.builtin.systemd_service:
+        name: monappli-api
+        state: restarted
+      listen: app_restart

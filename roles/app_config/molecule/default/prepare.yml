@@ -1,0 +1,50 @@
+---
+# Ce que le paquet monappli-api apporte sur une vraie VM : compte, unit systemd, lanceur.
+# Le lanceur est remplacé par un petit serveur HTTP : on teste le rôle, pas l'application.
+- name: Préparer une VM comme si le paquet était installé
+  hosts: all
+  become: true
+  tasks:
+    - name: Créer le groupe monappli
+      ansible.builtin.group:
+        name: monappli
+        system: true
+
+    - name: Créer le compte monappli
+      ansible.builtin.user:
+        name: monappli
+        group: monappli
+        system: true
+        home: /opt/monappli
+        create_home: false
+        shell: /sbin/nologin
+
+    - name: Créer le dossier du lanceur
+      ansible.builtin.file:
+        path: /opt/monappli/bin
+        state: directory
+        mode: "0755"
+
+    - name: Installer un lanceur factice
+      ansible.builtin.copy:
+        dest: /opt/monappli/bin/monappli-api
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          test -n "$JAVA_HOME" || { echo "JAVA_HOME absent" >&2; exit 1; }
+          exec python3 -m http.server "${APP_PORT:-8080}" --bind 127.0.0.1
+
+    - name: Installer la unit systemd du paquet
+      ansible.builtin.copy:
+        dest: /usr/lib/systemd/system/monappli-api.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=API monappli (factice Molecule)
+          [Service]
+          User=monappli
+          Group=monappli
+          EnvironmentFile=-/etc/monappli/api.env
+          ExecStart=/opt/monappli/bin/monappli-api
+          [Install]
+          WantedBy=multi-user.target

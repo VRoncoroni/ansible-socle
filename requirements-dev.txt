@@ -1,0 +1,8 @@
+# Outillage figé, identique sur les runners et sur les postes :
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+ansible-core==2.18.19
+ansible-lint==26.10.1
+yamllint==1.38.0
+molecule==26.10.0
+molecule-plugins[docker]==26.10.12
+docker==7.2.0

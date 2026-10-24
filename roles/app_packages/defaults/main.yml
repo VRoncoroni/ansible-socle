@@ -1,0 +1,7 @@
+---
+# Paquets RPM : liste de {name, version} au format version-build (versions.yml)
+app_packages: []
+# Archives tar.gz du dépôt raw-apps : liste de {name, version, sha256[, creates]}
+app_archives: []
+app_archives_root: /opt
+app_archives_keep: 3       # releases gardées sur disque par archive (dont la courante)

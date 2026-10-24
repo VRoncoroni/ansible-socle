@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: equipe-ops
+  description: Installe les paquets applicatifs aux versions exactes demandées
+  license: proprietary
+  min_ansible_version: "2.17"
+  platforms:
+    - name: EL
+      versions: ["9"]
+dependencies: []

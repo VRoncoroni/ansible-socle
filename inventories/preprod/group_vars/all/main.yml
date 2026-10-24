@@ -1,0 +1,16 @@
+---
+# Paramètres propres à l'environnement preprod.
+# Les valeurs communes vivent dans roles/*/defaults/ ; celles-ci les surchargent.
+env_name: preprod
+ansible_user: deploy
+ansible_ssh_common_args: "-o UserKnownHostsFile={{ inventory_dir }}/known_hosts -o StrictHostKeyChecking=yes"
+
+nexus_url: https://nexus.exemple.local
+nexus_yum_repos: [yum-candidates, yum-releases]
+nexus_user: svc-ansible-pre
+nexus_password: "{{ vault_nexus_password }}"    # la valeur réelle est dans vault.yml
+
+app_port: 8080
+app_log_level: info
+app_db_host: db-pre.exemple.local
+app_db_password: "{{ vault_app_db_password }}"

@@ -1,0 +1,6 @@
+---
+java_root: /opt/java
+java_keep: []              # versions à garder sur disque en plus de la version courante
+# java_version et java_sha256 viennent de inventories/<env>/group_vars/all/versions.yml,
+# java_home de playbooks/group_vars/all.yml (/opt/java/jdk-<version>)
+java_download_url: "{{ nexus_url }}/repository/raw-outils/jdk/jdk-{{ java_version }}-linux-x64.tar.gz"

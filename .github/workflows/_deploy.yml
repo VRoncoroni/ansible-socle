@@ -1,0 +1,75 @@
+# Workflow réutilisable : un passage Ansible sur un environnement.
+# Le runner auto-hébergé porte le label ansible-<env> (un runner par environnement, voir README).
+name: _deploy
+
+on:
+  workflow_call:
+    inputs:
+      target: { type: string, required: true }               # integration | preprod | prod
+      gh_environment: { type: string, required: true }       # environnement GitHub (secrets + protection)
+      mode: { type: string, default: apply }                 # apply | check
+      playbook: { type: string, default: site.yml }
+      fail_on_change: { type: boolean, default: false }      # pour la détection de dérive
+
+permissions:
+  contents: read
+
+jobs:
+  ansible:
+    runs-on: [self-hosted, "ansible-${{ inputs.target }}"]
+    environment: ${{ inputs.gh_environment }}
+    concurrency:
+      group: ansible-${{ inputs.target }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Préparer le runner
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          if [ -n "$SSH_KEY" ]; then
+            install -d -m 700 "$HOME/.ssh"
+            install -m 600 /dev/null "$HOME/.ssh/id_deploy"
+            printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_deploy"
+          fi
+
+      - name: Lancer Ansible
+        shell: bash
+        env:
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+          ANSIBLE_FORCE_COLOR: "1"
+          TARGET: ${{ inputs.target }}
+          PLAYBOOK: ${{ inputs.playbook }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -o pipefail
+          ARGS=(--diff)
+          [ "$MODE" = "check" ] && ARGS+=(--check)
+          [ -f "$HOME/.ssh/id_deploy" ] && ARGS+=(--private-key "$HOME/.ssh/id_deploy")
+          ansible-playbook -i "inventories/$TARGET" "playbooks/$PLAYBOOK" \
+            --vault-password-file scripts/vault-pass.sh "${ARGS[@]}" | tee ansible.log
+
+      - name: Signaler une dérive
+        if: inputs.fail_on_change
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          if grep -Eq 'changed=[1-9]' ansible.log; then
+            echo "::error::Dérive détectée sur $TARGET"; exit 1
+          fi
+
+      - name: Conserver le log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ansible-${{ inputs.target }}-${{ inputs.mode }}-${{ inputs.playbook }}-${{ github.run_attempt }}
+          path: ansible.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Nettoyer la clé
+        if: always()
+        run: rm -f "$HOME/.ssh/id_deploy"

@@ -1,0 +1,75 @@
+---
+- name: Créer le dossier des JDK
+  ansible.builtin.file:
+    path: "{{ java_root }}/archives"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Télécharger le JDK depuis Nexus
+  ansible.builtin.get_url:
+    url: "{{ java_download_url }}"
+    dest: "{{ java_root }}/archives/jdk-{{ java_version }}.tar.gz"
+    url_username: "{{ nexus_user }}"
+    url_password: "{{ nexus_password }}"
+    force_basic_auth: true
+    checksum: "sha256:{{ java_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  no_log: true
+
+# En mode --check l'archive n'est pas téléchargée : l'extraction et le contrôle
+# ne peuvent pas être simulés (le téléchargement ci-dessus montre déjà le changement).
+- name: Extraire le JDK dans son dossier versionné
+  ansible.builtin.unarchive:
+    src: "{{ java_root }}/archives/jdk-{{ java_version }}.tar.gz"
+    dest: "{{ java_root }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ java_home }}/bin/java"   # l'archive contient un dossier jdk-21.0.5+11
+  when: not ansible_check_mode
+
+- name: Vérifier que le JDK démarre et annonce la bonne version
+  ansible.builtin.command: "{{ java_home }}/bin/java -version"
+  register: java_check
+  changed_when: false
+  failed_when: java_version.split('+')[0] not in java_check.stderr
+  when: not ansible_check_mode
+
+- name: Lister les JDK présents
+  ansible.builtin.find:
+    paths: "{{ java_root }}"
+    patterns: "jdk-*"
+    file_type: directory
+  register: java_installed
+
+- name: Supprimer les JDK qui ne sont ni courants ni gardés
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ java_installed.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: >-
+    (item.path | basename) not in
+    (([java_version] + java_keep) | map('regex_replace', '^', 'jdk-') | list)
+
+- name: Lister les archives de JDK
+  ansible.builtin.find:
+    paths: "{{ java_root }}/archives"
+    patterns: "jdk-*.tar.gz"
+  register: java_archives
+
+- name: Supprimer les archives des JDK ni courants ni gardés
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ java_archives.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: >-
+    (item.path | basename) not in
+    (([java_version] + java_keep) | map('regex_replace', '^', 'jdk-') | map('regex_replace', '$', '.tar.gz') | list)

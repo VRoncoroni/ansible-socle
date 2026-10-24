@@ -1,0 +1,8 @@
+# Revue ciblée sur ce qui touche la prod : l'approbation des propriétaires de code est requise
+# (GitLab : Settings > Repository > Protected branches > Code owner approval ;
+#  GitHub : règle de branche « Require review from Code Owners »).
+# Remplacer @VRoncoroni par le groupe de l'équipe ops (@equipe-ops sur GitLab, @org/equipe-ops sur GitHub).
+/inventories/prod/        @VRoncoroni
+/roles/                   @VRoncoroni
+/.gitlab-ci.yml           @VRoncoroni
+/.github/                 @VRoncoroni

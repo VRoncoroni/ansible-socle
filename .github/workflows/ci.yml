@@ -1,0 +1,186 @@
+# Variante GitHub Actions du .gitlab-ci.yml : même logique.
+#   pull_request : lint, Molecule, check-prod-releases, plan-integration (--check --diff)
+#   push main    : le job « changes » calcule les environnements concernés par le commit ;
+#                  deploy -> test -> propose (PR de promotion suivante) ; preprod et prod
+#                  attendent l'approbation des environnements GitHub « preprod » et « prod ».
+#
+# Environnements GitHub (Settings > Environments) :
+#   integration                 secrets ANSIBLE_VAULT_PASSWORD, SSH_PRIVATE_KEY
+#   preprod-plan, prod-plan     limités à main, sans reviewers (plans et tests), mêmes secrets que l'env
+#   preprod, prod               limités à main, reviewers requis (déploiements)
+# Variables du repo : DEPLOY_ENABLED=true quand les runners auto-hébergés ansible-<env> existent,
+#   NEXUS_URL. Secrets du repo : PROMOTION_TOKEN, NEXUS_READ_USER, NEXUS_READ_PASSWORD.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:          # lancé à la main : tous les environnements sont concernés
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: requirements-dev.txt }
+      - run: pip install -r requirements-dev.txt
+      - run: ansible-galaxy collection install -r requirements.yml
+      - run: yamllint . && ansible-lint
+
+  molecule:
+    needs: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: requirements-dev.txt }
+      - run: pip install -r requirements-dev.txt
+      - run: ansible-galaxy collection install -r requirements.yml
+      - run: cd roles/app_config && molecule test
+        env:
+          PY_COLORS: "1"
+          ANSIBLE_FORCE_COLOR: "1"
+
+  # Garde-fou avant la prod : une PR qui touche le versions.yml de la prod échoue
+  # si un paquet n'est pas dans yum-releases. À déclarer en contrôle requis.
+  check-prod-releases:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Paquets de la prod présents dans yum-releases
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          NEXUS_URL: ${{ vars.NEXUS_URL }}
+          NEXUS_READ_USER: ${{ secrets.NEXUS_READ_USER }}
+          NEXUS_READ_PASSWORD: ${{ secrets.NEXUS_READ_PASSWORD }}
+        run: |
+          if git diff --quiet "$BASE" HEAD -- inventories/prod/group_vars/all/versions.yml; then
+            echo "Versions de la prod inchangées : rien à contrôler."; exit 0
+          fi
+          if [ -z "$NEXUS_URL" ]; then
+            echo "::error::NEXUS_URL non défini : impossible de vérifier les releases"; exit 1
+          fi
+          scripts/check-prod-releases.sh
+
+  plan-integration:
+    if: github.event_name == 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    needs: [lint, molecule]
+    uses: ./.github/workflows/_deploy.yml
+    with: { target: integration, gh_environment: integration, mode: check }
+    secrets: inherit
+
+  changes:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    outputs:
+      integration: ${{ steps.f.outputs.integration }}
+      preprod: ${{ steps.f.outputs.preprod }}
+      prod: ${{ steps.f.outputs.prod }}
+      versions_integration: ${{ steps.f.outputs.versions_integration }}
+      versions_preprod: ${{ steps.f.outputs.versions_preprod }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: f
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          ENABLED: ${{ vars.DEPLOY_ENABLED }}
+        run: |
+          if [ "$ENABLED" != "true" ]; then
+            echo "::notice::DEPLOY_ENABLED n'est pas à true : aucun déploiement (runners auto-hébergés absents)"
+            files=""
+          elif [ "$GITHUB_EVENT_NAME" != "push" ] || [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            files="ALL"            # lancé à la main ou première poussée : tout est concerné
+          else
+            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+          fi
+          printf 'Fichiers modifiés :\n%s\n' "$files"
+          common='^(ALL$|roles/|playbooks/|requirements\.yml$|ansible\.cfg$)'
+          for env in integration preprod prod; do
+            pattern="$common|^inventories/$env/"
+            [ "$env" != prod ] && pattern="$pattern|^tests/"
+            if grep -Eq "$pattern" <<< "$files"; then v=true; else v=false; fi
+            echo "$env=$v" | tee -a "$GITHUB_OUTPUT"
+          done
+          for env in integration preprod; do
+            if grep -Eq "^inventories/$env/group_vars/all/versions\.yml$" <<< "$files"; then v=true; else v=false; fi
+            echo "versions_$env=$v" | tee -a "$GITHUB_OUTPUT"
+          done
+
+  # ---------- intégration ----------
+  deploy-integration:
+    needs: [lint, molecule, changes]
+    if: needs.changes.outputs.integration == 'true'
+    uses: ./.github/workflows/_deploy.yml
+    with: { target: integration, gh_environment: integration }
+    secrets: inherit
+
+  test-integration:
+    needs: deploy-integration
+    uses: ./.github/workflows/_deploy.yml
+    with: { target: integration, gh_environment: integration, playbook: test-functional.yml }
+    secrets: inherit
+
+  propose-preprod:
+    needs: [changes, test-integration]
+    if: needs.changes.outputs.versions_integration == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: scripts/promote.sh integration preprod
+        env:
+          PROMOTION_TOKEN: ${{ secrets.PROMOTION_TOKEN }}
+
+  # ---------- preprod ----------
+  plan-preprod:
+    needs: [lint, molecule, changes, test-integration]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.preprod == 'true' }}
+    uses: ./.github/workflows/_deploy.yml
+    with: { target: preprod, gh_environment: preprod-plan, mode: check }
+    secrets: inherit
+
+  deploy-preprod:
+    needs: plan-preprod
+    uses: ./.github/workflows/_deploy.yml
+    with: { target: preprod, gh_environment: preprod }       # attend l'approbation
+    secrets: inherit
+
+  test-preprod:
+    needs: deploy-preprod
+    uses: ./.github/workflows/_deploy.yml
+    with: { target: preprod, gh_environment: preprod-plan, playbook: test-functional.yml }
+    secrets: inherit
+
+  propose-prod:
+    needs: [changes, test-preprod]
+    if: needs.changes.outputs.versions_preprod == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: scripts/promote.sh preprod prod
+        env:
+          PROMOTION_TOKEN: ${{ secrets.PROMOTION_TOKEN }}
+
+  # ---------- prod ----------
+  plan-prod:
+    needs: [lint, molecule, changes, test-preprod]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.prod == 'true' }}
+    uses: ./.github/workflows/_deploy.yml
+    with: { target: prod, gh_environment: prod-plan, mode: check }
+    secrets: inherit
+
+  deploy-prod:
+    needs: plan-prod
+    uses: ./.github/workflows/_deploy.yml
+    with: { target: prod, gh_environment: prod }             # attend l'approbation
+    secrets: inherit

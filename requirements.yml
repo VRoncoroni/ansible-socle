@@ -1,0 +1,9 @@
+---
+# Collections Ansible, versions exactes (installées dans ./collections, voir ansible.cfg)
+collections:
+  - name: ansible.posix
+    version: "1.6.2"
+  - name: community.general
+    version: "10.7.6"
+  - name: community.docker          # pilote Molecule et connexion aux conteneurs du lab
+    version: "4.8.5"

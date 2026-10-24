@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[server]
+port = {{ app_port }}
+log_level = {{ app_log_level }}
+
+[database]
+host = {{ app_db_host }}
+include = {{ app_config_dir }}/secrets.conf
+
+[runtime]
+environment = {{ env_name }}

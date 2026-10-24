@@ -1,0 +1,37 @@
+---
+# La clé est copiée sur la VM puis importée : dnf vérifie chaque paquet (gpgcheck)
+# sans dépendre d'un accès anonyme à Nexus.
+- name: Télécharger la clé GPG des paquets applicatifs
+  ansible.builtin.get_url:
+    url: "{{ nexus_gpgkey_url }}"
+    dest: "{{ nexus_gpgkey_file }}"
+    url_username: "{{ nexus_user }}"
+    url_password: "{{ nexus_password }}"
+    force_basic_auth: true
+    owner: root
+    group: root
+    mode: "0644"
+  no_log: true
+
+- name: Importer la clé GPG dans rpm
+  ansible.builtin.rpm_key:
+    key: "{{ nexus_gpgkey_file }}"
+    state: present
+  when: not ansible_check_mode
+
+# Le rôle retire aussi le dépôt qui n'est pas prévu, pour qu'un ajout manuel
+# ne survive pas au passage suivant (la prod ne voit jamais les candidats).
+- name: Déclarer ou retirer les dépôts applicatifs Nexus
+  ansible.builtin.yum_repository:
+    name: "nexus-{{ item }}"
+    description: "Paquets applicatifs ({{ item }})"
+    baseurl: "{{ nexus_url }}/repository/{{ item }}/"
+    username: "{{ nexus_user }}"
+    password: "{{ nexus_password }}"
+    gpgcheck: true
+    gpgkey: "file://{{ nexus_gpgkey_file }}"
+    sslverify: true
+    mode: "0600"           # le fichier contient le mot de passe
+    state: "{{ 'present' if item in nexus_yum_repos else 'absent' }}"
+  loop: "{{ nexus_yum_repos_known }}"
+  no_log: true

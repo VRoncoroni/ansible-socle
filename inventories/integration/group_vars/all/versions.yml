@@ -1,0 +1,25 @@
+---
+# Versions exactes déployées dans cet environnement. Jamais de latest ni de plage.
+# Seul fichier à modifier pour une montée de version ; une promotion copie ce fichier
+# tel quel vers l'environnement suivant (scripts/promote.sh).
+
+# JDK : archive Temurin déposée dans le dépôt raw-outils de Nexus (roles/java)
+java_version: "21.0.5+11"
+java_sha256: "3c654d98404c073b8a7e66bffb27f4ae3e7ede47d13284c132d40a83144bfd8c"
+java_keep: ["17.0.13+11"]          # JDK gardés sur disque pour un retour arrière rapide
+
+# Paquets RPM (yum-candidates / yum-releases), au format version-build
+app_packages:
+  - name: monappli-api
+    version: 2.4.1-38
+  # Autres paquets, à activer quand ils sont publiés dans Nexus :
+  # - name: monappli-worker
+  #   version: 2.4.1-12
+  # - name: outil-batch
+  #   version: 1.8.0-5
+
+# Artefacts qui ne sont pas des paquets (tar.gz dans le dépôt raw-apps), roles/app_packages/tasks/raw.yml
+app_archives: []
+  # - name: outil-batch
+  #   version: 1.8.0
+  #   sha256: "<empreinte sha256 publiée avec l'archive>"

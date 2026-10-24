@@ -1,0 +1,8 @@
+collections/
+.venv/
+ansible.log
+*.retry
+pkgs.txt
+.vault-pass*
+lab/.keys/
+lab/.cache/

@@ -1,0 +1,9 @@
+---
+# Tous les rôles notifient le sujet app_restart : l'application ne redémarre qu'une fois,
+# en fin de play (ou au flush_handlers), uniquement s'il y a eu un changement.
+- name: Redémarrer l'application
+  ansible.builtin.systemd_service:
+    name: monappli-api
+    state: restarted
+    daemon_reload: true      # nécessaire quand la surcharge systemd change
+  listen: app_restart

@@ -1,0 +1,121 @@
+---
+# Point d'entrée du déploiement :
+#   ansible-playbook -i inventories/<env> playbooks/site.yml --check --diff   # plan
+#   ansible-playbook -i inventories/<env> playbooks/site.yml --diff           # appliquer
+#   ansible-playbook -i inventories/<env> playbooks/site.yml --tags config --diff
+#
+# Retour arrière automatique : les versions en place sont relevées avant le déploiement ;
+# si un rôle, le contrôle de santé ou la preuve de version échoue, elles sont réinstallées
+# et l'application redémarre dessus. Le job échoue quand même.
+- name: Socle applicatif
+  hosts: app
+  become: true
+
+  pre_tasks:
+    - name: Relever les paquets installés
+      ansible.builtin.package_facts:
+      tags: [always]
+
+    # package_facts sépare version (2.4.1) et release (38) : on les recolle au format de versions.yml
+    - name: Mémoriser les versions en place
+      ansible.builtin.set_fact:
+        previous_packages: >-
+          {{ previous_packages | default([]) + [{
+               'name': item.name,
+               'version': ansible_facts.packages[item.name][0].version ~ '-' ~ ansible_facts.packages[item.name][0].release
+             }] }}
+      loop: "{{ app_packages }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.name in ansible_facts.packages
+      tags: [always]
+
+  tasks:
+    - name: Déployer avec retour arrière automatique
+      block:
+        - name: Déclarer les dépôts Nexus
+          ansible.builtin.import_role: { name: nexus_repo }
+          tags: [repo]
+
+        - name: Installer le JDK
+          ansible.builtin.import_role: { name: java }
+          tags: [java]
+
+        - name: Installer les paquets aux versions demandées
+          ansible.builtin.import_role: { name: app_packages }
+          tags: [packages]
+
+        - name: Générer la configuration
+          ansible.builtin.import_role: { name: app_config }
+          tags: [config]
+
+        - name: Appliquer les redémarrages en attente
+          ansible.builtin.meta: flush_handlers
+          tags: [always]
+
+        - name: Vérifier que l'application répond
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ app_port }}/health"
+            status_code: 200
+          register: health
+          retries: 10
+          delay: 6
+          until: health.status == 200
+          when: not ansible_check_mode
+          tags: [always]
+
+        # Preuve de version : un paquet mal installé ou un service non redémarré fait échouer le job
+        - name: Vérifier que l'API annonce la version déployée
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ app_port }}/version"
+            return_content: true
+          register: deployed
+          failed_when: >-
+            deployed.json.version !=
+            (app_packages | selectattr('name', 'equalto', 'monappli-api') | map(attribute='version') | first)
+          when:
+            - not ansible_check_mode
+            - app_packages | selectattr('name', 'equalto', 'monappli-api') | list | length > 0
+          tags: [always]
+
+      rescue:
+        - name: Réinstaller les versions précédentes
+          ansible.builtin.dnf:
+            name: "{{ item.name }}-{{ item.version }}"
+            state: present
+            allow_downgrade: true
+          loop: "{{ previous_packages | default([]) }}"
+          loop_control:
+            label: "{{ item.name }} {{ item.version }}"
+          when: not ansible_check_mode
+
+        - name: Redémarrer sur les versions précédentes
+          ansible.builtin.systemd_service:
+            name: monappli-api
+            state: restarted
+            daemon_reload: true
+          when:
+            - not ansible_check_mode
+            - previous_packages | default([]) | length > 0
+
+        - name: Vérifier que l'application répond sur les versions précédentes
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ app_port }}/health"
+            status_code: 200
+          register: health_rollback
+          retries: 10
+          delay: 6
+          until: health_rollback.status == 200
+          failed_when: false
+          when:
+            - not ansible_check_mode
+            - previous_packages | default([]) | length > 0
+
+        - name: Faire échouer le déploiement
+          ansible.builtin.fail:
+            msg: >-
+              Échec sur {{ inventory_hostname }} ({{ ansible_failed_task.name | default('?') }}) :
+              {{ 'paquets remis aux versions précédentes ' ~ (previous_packages | default([]) | map(attribute='version') | join(', '))
+                 if previous_packages | default([]) | length > 0 else 'aucune version précédente à restaurer' }}.
+              Application {{ 'de nouveau disponible' if (health_rollback.status | default(0)) == 200 else 'NON disponible' }}.
+              La configuration et le JDK restent ceux du commit déployé ; corriger ou faire un revert.

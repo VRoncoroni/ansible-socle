@@ -1,0 +1,9 @@
+---
+# Dépôts yum hébergés dans Nexus que cette VM doit déclarer.
+# Intégration et preprod : [yum-candidates, yum-releases] ; prod : [yum-releases] seulement.
+nexus_yum_repos: [yum-releases]
+# Tous les dépôts gérés : ceux qui ne sont pas dans nexus_yum_repos sont retirés
+nexus_yum_repos_known: [yum-candidates, yum-releases]
+# Clé publique qui signe les RPM applicatifs, téléchargée avec les identifiants Nexus
+nexus_gpgkey_url: "{{ nexus_url }}/repository/raw-outils/gpg/RPM-GPG-KEY-apps"
+nexus_gpgkey_file: /etc/pki/rpm-gpg/RPM-GPG-KEY-apps

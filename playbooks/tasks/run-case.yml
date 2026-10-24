@@ -1,0 +1,45 @@
+---
+- name: "Copier les entrées et l'attendu : {{ case_name }}"
+  ansible.builtin.copy:
+    src: "{{ case_dir }}/"
+    dest: "{{ case_path }}/"
+    mode: "u=rwX,go="
+
+- name: "Préparer le dossier de sortie : {{ case_name }}"
+  ansible.builtin.file:
+    path: "{{ case_path }}/actual"
+    state: directory
+    mode: "0700"
+
+- name: "Exécuter le script installé : {{ case_name }}"
+  ansible.builtin.command:
+    argv:
+      - /opt/monappli/bin/generer-synthese
+      - --input
+      - "{{ case_path }}/input"
+      - --output
+      - "{{ case_path }}/actual"
+      - --date-reference
+      - "2026-01-01"            # rend la sortie déterministe
+  environment:
+    JAVA_HOME: "{{ java_home }}"
+  register: run
+  changed_when: false
+  failed_when: false
+
+- name: "Comparer à l'attendu : {{ case_name }}"
+  ansible.builtin.command:
+    argv: [diff, -ru, "{{ case_path }}/expected", "{{ case_path }}/actual"]
+  register: cmp
+  changed_when: false
+  failed_when: false
+  when: run.rc == 0
+
+- name: "Enregistrer le résultat : {{ case_name }}"
+  ansible.builtin.set_fact:
+    test_results: >-
+      {{ test_results | default([]) + [{
+           'cas': case_name,
+           'ok': run.rc == 0 and cmp.rc == 0,
+           'detail': (run.stderr if run.rc != 0 else (cmp.stdout or cmp.msg | default('')))
+         }] }}

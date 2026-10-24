@@ -1,0 +1,28 @@
+---
+extends: default
+
+ignore: |
+  collections/
+  .venv/
+  **/vault.yml
+
+rules:
+  line-length:
+    max: 160
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false          # « on: » des workflows GitHub
+  braces:
+    max-spaces-inside: 1
+  brackets:
+    max-spaces-inside: 1
+  document-start:
+    ignore: |
+      .gitlab-ci.yml
+      .github/
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true

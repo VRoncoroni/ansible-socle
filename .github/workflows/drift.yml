@@ -1,0 +1,30 @@
+# Détection de dérive : un --check sur les trois environnements chaque matin.
+# Échoue si un seul élément changerait (quelqu'un a modifié une VM à la main).
+# Activez les notifications d'échec de workflow pour en être averti.
+name: drift
+
+on:
+  schedule:
+    - cron: "17 5 * * 1-5"     # en semaine, 5 h 17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    if: vars.DEPLOY_ENABLED == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: integration, gh_environment: integration }
+          - { target: preprod, gh_environment: preprod-plan }
+          - { target: prod, gh_environment: prod-plan }
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      target: ${{ matrix.target }}
+      gh_environment: ${{ matrix.gh_environment }}
+      mode: check
+      fail_on_change: true
+    secrets: inherit

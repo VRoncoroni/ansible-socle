@@ -1,0 +1,25 @@
+# Patchs système (playbooks/patch-os.yml), séparés des paquets applicatifs.
+# Lancement manuel par environnement ; la prod passe par l'approbation de l'environnement « prod ».
+name: patch-os
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Environnement à patcher
+        type: choice
+        options: [integration, preprod, prod]
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  patch:
+    if: vars.DEPLOY_ENABLED == 'true'
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      target: ${{ inputs.target }}
+      gh_environment: ${{ inputs.target }}
+      playbook: patch-os.yml
+    secrets: inherit

@@ -1,0 +1,63 @@
+---
+# Jeux d'essai du générateur de synthèse, rejoués sur la VM après déploiement.
+# Ils ne testent plus la logique (c'est le rôle du repo de l'application), mais l'installation :
+# la bonne version du paquet, le bon JDK, les droits du compte applicatif, l'encodage et la locale.
+#   ansible-playbook -i inventories/integration playbooks/test-functional.yml
+- name: Jeux d'essai du générateur de synthèse
+  hosts: app
+  become: true
+  become_user: monappli           # le compte réel de l'application (paquet acl requis sur la VM)
+  vars:
+    cases_dir: "{{ playbook_dir }}/../tests/functional"
+  tasks:
+    - name: Trouver les cas de test
+      ansible.builtin.find:
+        paths: "{{ cases_dir }}"
+        file_type: directory
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: cases
+
+    - name: Vérifier qu'il y a des cas à jouer
+      ansible.builtin.assert:
+        that: cases.matched > 0
+        fail_msg: "Aucun cas de test dans {{ cases_dir }}"
+        quiet: true
+      run_once: true
+
+    - name: Créer un dossier de travail
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: jeux-essai-
+      register: work
+
+    - name: Jouer les cas puis faire le bilan
+      block:
+        - name: Jouer chaque cas
+          ansible.builtin.include_tasks: tasks/run-case.yml
+          loop: "{{ cases.files | map(attribute='path') | sort }}"
+          loop_control:
+            loop_var: case_dir
+            label: "{{ case_dir | basename }}"
+          vars:
+            case_name: "{{ case_dir | basename }}"
+            case_path: "{{ work.path }}/{{ case_dir | basename }}"
+
+        - name: Afficher les écarts
+          ansible.builtin.debug:
+            msg: "{{ item.detail }}"
+          loop: "{{ test_results | default([]) | rejectattr('ok') | list }}"
+          loop_control:
+            label: "{{ item.cas }}"
+
+        - name: Bilan
+          ansible.builtin.assert:
+            that: test_results | default([]) | rejectattr('ok') | list | length == 0
+            fail_msg: "Cas en échec : {{ test_results | rejectattr('ok') | map(attribute='cas') | join(', ') }}"
+            success_msg: "{{ test_results | length }} cas réussis"
+      always:
+        - name: Nettoyer le dossier de travail
+          ansible.builtin.file:
+            path: "{{ work.path }}"
+            state: absent

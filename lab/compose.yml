@@ -1,0 +1,41 @@
+# Lab local : un Nexus et trois « VM » Rocky Linux 9 avec systemd, pour jouer tout le parcours
+# (build, candidat, intégration, promotion, release, prod) sans infrastructure. Voir lab/README.md.
+---
+name: socle-lab
+
+x-vm: &vm
+  image: docker.io/geerlingguy/docker-rockylinux9-ansible:latest
+  command: /usr/sbin/init
+  privileged: true
+  cgroup: host
+  volumes:
+    - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  depends_on: [nexus]
+
+services:
+  nexus:
+    image: docker.io/sonatype/nexus3:3.73.0
+    container_name: lab-nexus
+    ports: ["8081:8081"]
+    environment:
+      INSTALL4J_ADD_VM_PARAMS: "-Xms1g -Xmx1g -XX:MaxDirectMemorySize=1g"
+    volumes:
+      - nexus-data:/nexus-data
+
+  vm-int-01:
+    <<: *vm
+    container_name: vm-int-01
+    hostname: vm-int-01
+
+  vm-pre-01:
+    <<: *vm
+    container_name: vm-pre-01
+    hostname: vm-pre-01
+
+  vm-prod-01:
+    <<: *vm
+    container_name: vm-prod-01
+    hostname: vm-prod-01
+
+volumes:
+  nexus-data:

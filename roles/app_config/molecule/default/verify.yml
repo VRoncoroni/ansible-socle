@@ -1,0 +1,62 @@
+---
+- name: Vérifier
+  hosts: all
+  become: true
+  tasks:
+    - name: Lire l'état des fichiers générés
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/monappli/app.conf
+        - /etc/monappli/secrets.conf
+        - /etc/monappli/api.env
+      register: files
+
+    - name: Fichiers présents, root:monappli, 0640
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.pw_name == 'root'
+          - item.stat.gr_name == 'monappli'
+          - item.stat.mode == '0640'
+        fail_msg: "{{ item.item }} : droits inattendus"
+        quiet: true
+      loop: "{{ files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Lire api.env
+      ansible.builtin.slurp:
+        src: /etc/monappli/api.env
+      register: api_env
+
+    - name: Lire la surcharge java.conf
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/monappli-api.service.d/java.conf
+      register: java_conf
+
+    - name: Contenu attendu
+      ansible.builtin.assert:
+        that:
+          - "'APP_ENV=molecule' in (api_env.content | b64decode)"
+          - "'APP_PORT=8080' in (api_env.content | b64decode)"
+          - "'Environment=JAVA_HOME=/opt/java/jdk-21.0.5+11' in (java_conf.content | b64decode)"
+        quiet: true
+
+    - name: Relever l'état des services
+      ansible.builtin.service_facts:
+
+    - name: Le service est actif et activé
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['monappli-api.service'].state == 'running'
+          - ansible_facts.services['monappli-api.service'].status == 'enabled'
+        quiet: true
+
+    - name: Le service a reçu son JAVA_HOME et répond
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/
+      register: http
+      retries: 5
+      delay: 2
+      until: http.status == 200
